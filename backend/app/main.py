@@ -1,10 +1,22 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
+from typing import Literal
+from fastapi.middleware.cors import CORSMiddleware
+from app.job_matcher import rank_jobs
+from app.database import SessionLocal
+from app.models import UserProfile as UserProfileModel
 import sqlite3
 import re
+import json
+import os
 
-from gemini_service import ask_gemini
+from app.gemini_service import ask_gemini
+from app.adzuna_service import search_jobs
 
+
+# ============================================================
+# FASTAPI APPLICATION
+# ============================================================
 
 app = FastAPI(
     title="AI Job Finder",
@@ -12,14 +24,36 @@ app = FastAPI(
     version="1.0.0"
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-DATABASE_NAME = "ai_job_finder.db"
+
+# ============================================================
+# DATABASE
+# ============================================================
+
+DATABASE_NAME = os.path.join(
+    os.path.dirname(__file__),
+    "ai_job_finder.db"
+)
+
+
+def get_db_connection():
+    connection = sqlite3.connect(DATABASE_NAME)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
 def init_database():
     connection = sqlite3.connect(DATABASE_NAME)
     cursor = connection.cursor()
 
+    # Existing practice table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS practice_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,12 +65,30 @@ def init_database():
         )
     """)
 
+    # New user profile table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            skills TEXT NOT NULL,
+            experience REAL NOT NULL,
+            location TEXT NOT NULL,
+            preferred_role TEXT NOT NULL,
+            expected_salary TEXT NOT NULL
+        )
+    """)
+
     connection.commit()
     connection.close()
 
 
+# Make sure database/tables exist
 init_database()
 
+
+# ============================================================
+# REQUEST MODELS
+# ============================================================
 
 class AIRequest(BaseModel):
     prompt: str
@@ -52,10 +104,32 @@ class CareerProfile(BaseModel):
     expected_salary: str
 
 
+class UserProfile(BaseModel):
+    name: str
+    skills: list[str]
+    experience: Literal[
+        "Fresher",
+        "0-1 Year",
+        "1-2 Years",
+        "2-3 Years",
+        "3-5 Years",
+        "5-10 Years",
+        "10+ Years",
+    ]
+    location: str
+    preferred_role: str
+    expected_salary: str
+
+
 class SkillGapRequest(BaseModel):
     skills: list[str]
     target_role: str
     experience: str
+
+
+class TrainingRequest(BaseModel):
+    skill: str
+    level: str = "Beginner"
 
 
 class TrainingPlanRequest(BaseModel):
@@ -90,12 +164,21 @@ class PracticeEvaluateRequest(BaseModel):
     difficulty: str
 
 
+# ============================================================
+# HOME
+# ============================================================
+
 @app.get("/")
 def home():
     return {
+        "success": True,
         "message": "AI Job Finder API is running"
     }
 
+
+# ============================================================
+# GEMINI AI TEST
+# ============================================================
 
 @app.post("/api/ai/test")
 def ai_test(request: AIRequest):
@@ -107,6 +190,10 @@ def ai_test(request: AIRequest):
         "response": answer
     }
 
+
+# ============================================================
+# CAREER PROFILE ANALYSIS
+# ============================================================
 
 @app.post("/api/profile/analyze")
 def analyze_profile(profile: CareerProfile):
@@ -160,6 +247,10 @@ Give the following sections:
     }
 
 
+# ============================================================
+# SKILL GAP ANALYSIS + PERSONALIZED LEARNING ROADMAP
+# ============================================================
+
 @app.post("/api/skill-gap/analyze")
 def analyze_skill_gap(request: SkillGapRequest):
 
@@ -177,33 +268,112 @@ Target Job Role:
 Experience:
 {request.experience}
 
-Provide a practical Skill Gap Analysis.
+Create a practical and realistic Skill Gap Analysis.
 
-Use these sections:
+Return ONLY valid JSON in exactly this structure:
 
-1. Current Skills
-2. Missing Skills
-3. High Priority Skills
-4. Medium Priority Skills
-5. Skills That Are Already Strong
-6. Recommended Learning Order
-7. Practical Projects to Build
-8. Interview Topics to Prepare
-9. Estimated Training Path
+{{
+    "current_skills": [],
+    "missing_skills": [],
+    "high_priority_skills": [],
+    "medium_priority_skills": [],
+    "strong_skills": [],
+    "learning_order": [
+        {{
+            "step": 1,
+            "skill": "",
+            "reason": "",
+            "estimated_time": ""
+        }}
+    ],
+    "practical_projects": [
+        {{
+            "project": "",
+            "skills": [],
+            "description": ""
+        }}
+    ],
+    "interview_topics": [],
+    "estimated_training_path": ""
+}}
 
-Keep the answer simple, clear, and practical.
+Rules:
 
-Do not assume that the candidate already knows skills that are not listed.
+- Do not assume the candidate knows skills that are not listed.
+- current_skills must contain only skills provided by the candidate.
+- missing_skills should contain important skills required for the target role.
+- high_priority_skills should be the most important missing skills.
+- medium_priority_skills should be useful but less urgent.
+- strong_skills should contain skills from the candidate that are already useful for the target role.
+- learning_order must be practical and sequential.
+- Each learning step should contain an estimated learning time.
+- practical_projects should help the candidate gain job-ready experience.
+- interview_topics should contain important interview preparation areas.
+- estimated_training_path should be a short practical summary.
+- Keep everything simple and realistic.
+- Return JSON only.
 """
 
-    answer = ask_gemini(prompt)
+    try:
 
-    return {
-        "success": True,
-        "target_role": request.target_role,
-        "skill_gap_analysis": answer
-    }
+        answer = ask_gemini(prompt)
 
+        clean_response = answer.strip()
+
+        # Remove markdown code fences
+        if clean_response.startswith("```"):
+            clean_response = re.sub(
+                r"```(?:json)?",
+                "",
+                clean_response,
+                flags=re.IGNORECASE
+            ).strip()
+
+        if clean_response.endswith("```"):
+            clean_response = clean_response[:-3].strip()
+
+        result = json.loads(clean_response)
+
+        return {
+            "success": True,
+            "target_role": request.target_role,
+            "experience": request.experience,
+            "skill_gap_analysis": result,
+            "gemini_used": True
+        }
+
+    except Exception as error:
+
+        print("Gemini Skill Gap analysis unavailable.")
+        print("Gemini error:", error)
+
+        # ----------------------------------------------------
+        # Safe fallback
+        # ----------------------------------------------------
+
+        return {
+            "success": True,
+            "target_role": request.target_role,
+            "experience": request.experience,
+            "skill_gap_analysis": {
+                "current_skills": request.skills,
+                "missing_skills": [],
+                "high_priority_skills": [],
+                "medium_priority_skills": [],
+                "strong_skills": request.skills,
+                "learning_order": [],
+                "practical_projects": [],
+                "interview_topics": [],
+                "estimated_training_path":
+                    "AI analysis is temporarily unavailable. "
+                    "Please try again later."
+            },
+            "gemini_used": False
+        }
+
+# ============================================================
+# TRAINING PLAN
+# ============================================================
 
 @app.post("/api/training/plan")
 def create_training_plan(request: TrainingPlanRequest):
@@ -252,6 +422,10 @@ Use these sections:
         "training_plan": answer
     }
 
+
+# ============================================================
+# DAILY TRAINING
+# ============================================================
 
 @app.post("/api/training/daily")
 def create_daily_training(request: DailyTrainingRequest):
@@ -303,6 +477,10 @@ Use these sections:
     }
 
 
+# ============================================================
+# PRACTICE QUESTION GENERATION
+# ============================================================
+
 @app.post("/api/practice/generate")
 def generate_practice(request: PracticeGenerateRequest):
 
@@ -345,6 +523,10 @@ Number the questions clearly.
         "practice_questions": answer
     }
 
+
+# ============================================================
+# PRACTICE EVALUATION
+# ============================================================
 
 @app.post("/api/practice/evaluate")
 def evaluate_practice(request: PracticeEvaluateRequest):
@@ -397,10 +579,9 @@ Do not insult or discourage the candidate.
     else:
         score = 0.0
 
-    connection = sqlite3.connect(DATABASE_NAME)
-    cursor = connection.cursor()
+    connection = get_db_connection()
 
-    cursor.execute("""
+    connection.execute("""
         INSERT INTO practice_results
         (target_role, topic, difficulty, score, user_answer)
         VALUES (?, ?, ?, ?, ?)
@@ -424,23 +605,24 @@ Do not insult or discourage the candidate.
     }
 
 
+# ============================================================
+# PROGRESS
+# ============================================================
+
 @app.get("/api/progress")
 def get_progress():
 
-    connection = sqlite3.connect(DATABASE_NAME)
-    cursor = connection.cursor()
+    connection = get_db_connection()
 
-    cursor.execute("""
+    summary = connection.execute("""
         SELECT
             COUNT(*),
             COALESCE(AVG(score), 0),
             COALESCE(MAX(score), 0)
         FROM practice_results
-    """)
+    """).fetchone()
 
-    summary = cursor.fetchone()
-
-    cursor.execute("""
+    results = connection.execute("""
         SELECT
             topic,
             difficulty,
@@ -448,9 +630,7 @@ def get_progress():
         FROM practice_results
         ORDER BY id DESC
         LIMIT 20
-    """)
-
-    results = cursor.fetchall()
+    """).fetchall()
 
     connection.close()
 
@@ -458,9 +638,9 @@ def get_progress():
 
     for result in results:
         history.append({
-            "topic": result[0],
-            "difficulty": result[1],
-            "score": result[2]
+            "topic": result["topic"],
+            "difficulty": result["difficulty"],
+            "score": result["score"]
         })
 
     return {
@@ -472,19 +652,20 @@ def get_progress():
     }
 
 
+# ============================================================
+# AI PROGRESS ANALYSIS
+# ============================================================
+
 @app.get("/api/progress/analyze")
 def analyze_progress():
 
-    connection = sqlite3.connect(DATABASE_NAME)
-    cursor = connection.cursor()
+    connection = get_db_connection()
 
-    cursor.execute("""
+    results = connection.execute("""
         SELECT topic, difficulty, score
         FROM practice_results
         ORDER BY id ASC
-    """)
-
-    results = cursor.fetchall()
+    """).fetchall()
 
     connection.close()
 
@@ -496,11 +677,11 @@ def analyze_progress():
 
     progress_text = ""
 
-    for topic, difficulty, score in results:
+    for result in results:
         progress_text += (
-            f"Topic: {topic}, "
-            f"Difficulty: {difficulty}, "
-            f"Score: {score}/10\n"
+            f"Topic: {result['topic']}, "
+            f"Difficulty: {result['difficulty']}, "
+            f"Score: {result['score']}/10\n"
         )
 
     prompt = f"""
@@ -540,3 +721,550 @@ Important rules:
         "practice_attempts": len(results),
         "analysis": analysis
     }
+
+
+# ============================================================
+# ADZUNA JOB SEARCH
+# ============================================================
+
+@app.get("/api/jobs/search")
+def jobs_search(
+    keyword: str = Query(..., description="Job title or skill"),
+    location: str = Query("India", description="Job location")
+):
+
+    jobs = search_jobs(keyword, location)
+
+    return {
+        "success": True,
+        "keyword": keyword,
+        "location": location,
+        "count": len(jobs),
+        "jobs": jobs
+    }
+
+
+# ============================================================
+# SAVE USER PROFILE - SQLALCHEMY
+# ============================================================
+
+@app.post("/api/profile")
+def create_profile(profile: UserProfile):
+
+    db = SessionLocal()
+
+    try:
+
+        new_profile = UserProfileModel(
+            name=profile.name,
+            skills=json.dumps(profile.skills),
+            experience=profile.experience,
+            location=profile.location,
+            preferred_role=profile.preferred_role,
+            expected_salary=profile.expected_salary
+        )
+
+        db.add(new_profile)
+        db.commit()
+        db.refresh(new_profile)
+
+        return {
+            "success": True,
+            "message": "User profile saved successfully",
+            "profile": profile.model_dump(),
+            "id": new_profile.id
+        }
+
+    finally:
+        db.close()
+
+
+# ============================================================
+# GET SAVED USER PROFILE - SQLALCHEMY
+# ============================================================
+
+@app.get("/api/profile")
+def get_profile():
+
+    db = SessionLocal()
+
+    try:
+
+        profile = (
+            db.query(UserProfileModel)
+            .order_by(UserProfileModel.id.desc())
+            .first()
+        )
+
+        if profile is None:
+            return {
+                "success": False,
+                "message": "No user profile found"
+            }
+
+        return {
+            "success": True,
+            "profile": {
+                "id": profile.id,
+                "name": profile.name,
+                "skills": json.loads(profile.skills),
+                "experience": profile.experience,
+                "location": profile.location,
+                "preferred_role": profile.preferred_role,
+                "expected_salary": profile.expected_salary
+            }
+        }
+
+    finally:
+        db.close()
+
+
+# ============================================================
+# AUTOMATIC JOB MATCHING
+# ============================================================
+
+class JobMatchRequest(BaseModel):
+    skills: list[str]
+    experience: str
+    location: str
+    preferred_role: str
+    expected_salary: str
+
+
+@app.post("/api/jobs/match")
+def match_jobs(request: JobMatchRequest):
+
+    # Search jobs using the user's preferred role and location
+    jobs = search_jobs(
+        request.preferred_role,
+        request.location
+    )
+
+    matched_jobs = []
+
+    for job in jobs:
+
+        title = job.get("title", "")
+        company = job.get("company", "")
+        job_location = job.get("location", "")
+        description = job.get("description", "")
+        url = job.get("url", "")
+
+        prompt = f"""
+You are an expert AI Job Matching System.
+
+Compare the candidate with the job.
+
+CANDIDATE PROFILE
+-----------------
+Preferred Role: {request.preferred_role}
+Experience: {request.experience}
+Location: {request.location}
+Skills: {", ".join(request.skills)}
+Expected Salary: {request.expected_salary}
+
+JOB
+---
+Title: {title}
+Company: {company}
+Location: {job_location}
+Description:
+{description}
+
+Analyze the job and return ONLY valid JSON in this exact format:
+
+{{
+  "match_score": 0,
+  "matching_skills": [],
+  "missing_skills": [],
+  "recommendation": ""
+}}
+
+Rules:
+
+- match_score must be between 0 and 100.
+- matching_skills must contain skills from the candidate that are relevant to the job.
+- missing_skills must contain important skills mentioned or clearly required by the job but absent from the candidate profile.
+- recommendation should be short and practical.
+- Do not add markdown.
+- Return JSON only.
+"""
+
+        try:
+            ai_response = ask_gemini(prompt)
+
+            # Remove possible markdown code fences
+            clean_response = ai_response.strip()
+
+            if clean_response.startswith("```"):
+                clean_response = re.sub(
+                    r"```(?:json)?",
+                    "",
+                    clean_response,
+                    flags=re.IGNORECASE
+                ).strip()
+
+            if clean_response.endswith("```"):
+                clean_response = clean_response[:-3].strip()
+
+            analysis = json.loads(clean_response)
+
+        except Exception as error:
+
+            analysis = {
+                "match_score": 0,
+                "matching_skills": [],
+                "missing_skills": [],
+                "recommendation": "Unable to analyze this job."
+            }
+
+        matched_jobs.append({
+            "title": title,
+            "company": company,
+            "location": job_location,
+            "url": url,
+            "match_score": analysis.get("match_score", 0),
+            "matching_skills": analysis.get("matching_skills", []),
+            "missing_skills": analysis.get("missing_skills", []),
+            "recommendation": analysis.get("recommendation", "")
+        })
+
+    # Highest matching jobs first
+    matched_jobs.sort(
+        key=lambda job: job["match_score"],
+        reverse=True
+    )
+
+    return {
+        "success": True,
+        "candidate": {
+            "preferred_role": request.preferred_role,
+            "location": request.location,
+            "experience": request.experience
+        },
+        "jobs_found": len(matched_jobs),
+        "matched_jobs": matched_jobs
+    }
+
+
+
+# ============================================================
+# AUTOMATIC JOB MATCHING FROM SAVED PROFILE
+# LOCAL MATCHER + TOP 3 GEMINI ANALYSIS
+# ============================================================
+
+@app.post("/api/jobs/match-profile")
+def match_jobs_from_saved_profile():
+
+    # --------------------------------------------------------
+    # 1. Get latest saved profile using SQLAlchemy
+    # --------------------------------------------------------
+
+    db = SessionLocal()
+
+    try:
+        profile = (
+            db.query(UserProfileModel)
+            .order_by(UserProfileModel.id.desc())
+            .first()
+        )
+    finally:
+        db.close()
+
+    # --------------------------------------------------------
+    # 2. Check whether profile exists
+    # --------------------------------------------------------
+
+    if profile is None:
+        return {
+            "success": False,
+            "message": "No saved user profile found. Please create a profile first."
+        }
+
+    # --------------------------------------------------------
+    # 3. Convert saved skills into Python list
+    # --------------------------------------------------------
+
+    try:
+        skills = json.loads(profile.skills)
+    except Exception:
+        skills = []
+
+    # --------------------------------------------------------
+    # 4. Search jobs
+    # --------------------------------------------------------
+
+    jobs = search_jobs(
+        profile.preferred_role,
+        profile.location
+    )
+
+    if not jobs:
+        return {
+            "success": True,
+            "profile_used": {
+                "name": profile.name,
+                "preferred_role": profile.preferred_role,
+                "location": profile.location,
+                "experience": profile.experience,
+                "skills": skills
+            },
+            "jobs_found": 0,
+            "matched_jobs": [],
+            "gemini_used": False,
+            "message": "No jobs found for the selected role and location."
+        }
+
+    # --------------------------------------------------------
+    # 5. LOCAL MATCHING
+    # --------------------------------------------------------
+
+    ranked_jobs = rank_jobs(
+        skills,
+        jobs
+    )
+
+    # --------------------------------------------------------
+    # 6. Select TOP 3 jobs for Gemini
+    # --------------------------------------------------------
+
+    top_jobs = ranked_jobs[:3]
+
+    # --------------------------------------------------------
+    # 7. Analyze TOP 3 using Gemini
+    # --------------------------------------------------------
+
+    gemini_used = False
+
+    for job in top_jobs:
+
+        title = job.get("title", "")
+        company = job.get("company", "")
+        job_location = job.get("location", "")
+        description = job.get("description", "")
+
+        prompt = f"""
+You are an expert AI Job Matching System.
+
+Compare the candidate profile with the job.
+
+CANDIDATE PROFILE
+-----------------
+Name: {profile.name}
+Preferred Role: {profile.preferred_role}
+Experience: {profile.experience} years
+Location: {profile.location}
+Skills: {", ".join(skills)}
+Expected Salary: {profile.expected_salary}
+
+JOB
+---
+Title: {title}
+Company: {company}
+Location: {job_location}
+
+Description:
+{description}
+
+Return ONLY valid JSON:
+
+{{
+  "match_score": 0,
+  "matching_skills": [],
+  "missing_skills": [],
+  "recommendation": ""
+}}
+
+Rules:
+
+- match_score must be between 0 and 100.
+- Consider skills, experience, role and job requirements.
+- matching_skills should contain skills the candidate has.
+- missing_skills should contain important skills required by the job.
+- recommendation should be short and practical.
+- Return JSON only.
+"""
+
+        try:
+
+            ai_response = ask_gemini(prompt)
+
+            clean_response = ai_response.strip()
+
+            if clean_response.startswith("```"):
+                clean_response = re.sub(
+                    r"```(?:json)?",
+                    "",
+                    clean_response,
+                    flags=re.IGNORECASE
+                ).strip()
+
+            if clean_response.endswith("```"):
+                clean_response = clean_response[:-3].strip()
+
+            analysis = json.loads(clean_response)
+
+            job["match_score"] = analysis.get(
+                "match_score",
+                job.get("match_score", 0)
+            )
+
+            job["matching_skills"] = analysis.get(
+                "matching_skills",
+                job.get("matching_skills", [])
+            )
+
+            job["missing_skills"] = analysis.get(
+                "missing_skills",
+                job.get("missing_skills", [])
+            )
+
+            job["recommendation"] = analysis.get(
+                "recommendation",
+                "Good match based on your profile."
+            )
+
+            gemini_used = True
+
+        except Exception as e:
+
+            print(
+                f"Gemini analysis failed for {title}: {e}"
+            )
+
+            # IMPORTANT:
+            # Keep local matching result if Gemini fails.
+
+            job["recommendation"] = (
+                "Match calculated using your skills and job requirements."
+            )
+
+    # --------------------------------------------------------
+    # 8. Keep remaining jobs with local matching
+    # --------------------------------------------------------
+
+    for job in ranked_jobs[3:]:
+
+        if not job.get("recommendation"):
+            job["recommendation"] = (
+                "Match calculated using your skills and job requirements."
+            )
+
+    # --------------------------------------------------------
+    # 9. Re-sort after Gemini analysis
+    # --------------------------------------------------------
+
+    ranked_jobs.sort(
+        key=lambda job: job.get("match_score", 0),
+        reverse=True
+    )
+
+    # --------------------------------------------------------
+    # 10. Return results
+    # --------------------------------------------------------
+
+    return {
+        "success": True,
+        "profile_used": {
+            "name": profile.name,
+            "preferred_role": profile.preferred_role,
+            "location": profile.location,
+            "experience": profile.experience,
+            "skills": skills
+        },
+        "jobs_found": len(ranked_jobs),
+        "matched_jobs": ranked_jobs,
+        "gemini_used": gemini_used
+    }
+
+
+# ============================================================
+# AI TRAINING
+# ============================================================
+
+@app.post("/api/training/generate")
+def generate_training(request: TrainingRequest):
+
+    prompt = f"""
+You are an expert technical trainer.
+
+Create a practical learning lesson for the following skill.
+
+Skill:
+{request.skill}
+
+Level:
+{request.level}
+
+Create the lesson using exactly these sections:
+
+1. Topic
+2. What You Will Learn
+3. Concept Explanation
+4. Why This Skill Is Important
+5. Practical Example
+6. Code Example
+7. Practice Task
+8. Interview Questions
+9. Next Step
+
+Rules:
+
+- Keep the explanation simple and beginner-friendly.
+- Focus on practical job-related knowledge.
+- Use Python examples when the skill is related to Python.
+- Code should be short and easy to understand.
+- Do not assume knowledge that the learner has not provided.
+- Return ONLY valid JSON.
+
+Return exactly this structure:
+
+{{
+  "topic": "",
+  "what_you_will_learn": [],
+  "concept_explanation": "",
+  "why_important": "",
+  "practical_example": "",
+  "code_example": "",
+  "practice_task": "",
+  "interview_questions": [],
+  "next_step": ""
+}}
+"""
+
+    try:
+
+        ai_response = ask_gemini(prompt)
+
+        clean_response = ai_response.strip()
+
+        # Remove markdown code fences
+        if clean_response.startswith("```"):
+            clean_response = re.sub(
+                r"```(?:json)?",
+                "",
+                clean_response,
+                flags=re.IGNORECASE
+            ).strip()
+
+        if clean_response.endswith("```"):
+            clean_response = clean_response[:-3].strip()
+
+        training = json.loads(clean_response)
+
+        return {
+            "success": True,
+            "skill": request.skill,
+            "level": request.level,
+            "training": training
+        }
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "skill": request.skill,
+            "level": request.level,
+            "message": "Unable to generate training lesson.",
+            "error": str(e)
+        }
