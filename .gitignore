@@ -1,4 +1,14 @@
-.env 
-venv/ 
-__pycache__/ 
-*.db 
+.env
+venv/
+__pycache__/
+*.db
+
+# Backup files
+backend/app/main_backup*.py
+backend/app/main_before_*.py
+
+# Practice and test files
+backend/app/sqlalchemy_practice.py
+backend/app/sqlalchemy_profile_read.py
+backend/app/sqlalchemy_profile_test.py
+backend/app/test_job_matching.py
