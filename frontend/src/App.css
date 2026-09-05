@@ -1,0 +1,179 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f4f7fb;
+  color: #1f2937;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.app {
+  min-height: 100vh;
+}
+
+/* HEADER */
+
+.header {
+  background: #111827;
+  color: white;
+  padding: 22px 7%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.header p {
+  margin: 6px 0 0;
+  color: #cbd5e1;
+}
+
+.voice-button {
+  border: none;
+  background: white;
+  color: #111827;
+  padding: 12px 20px;
+  border-radius: 25px;
+  font-size: 15px;
+  font-weight: bold;
+}
+
+/* DASHBOARD */
+
+.dashboard {
+  width: 86%;
+  max-width: 1200px;
+  margin: 35px auto;
+}
+
+/* WELCOME */
+
+.welcome-card {
+  background: white;
+  border-radius: 18px;
+  padding: 35px;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.08);
+  margin-bottom: 30px;
+}
+
+.welcome-card h2 {
+  margin-top: 0;
+  font-size: 30px;
+}
+
+.welcome-card p {
+  color: #64748b;
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.primary-button {
+  margin-top: 15px;
+  border: none;
+  background: #2563eb;
+  color: white;
+  padding: 14px 24px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.primary-button:hover {
+  background: #1d4ed8;
+}
+
+.status-message {
+  margin-top: 18px;
+  font-weight: bold;
+  color: #2563eb !important;
+}
+
+/* FEATURE CARDS */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+}
+
+.feature-card {
+  background: white;
+  border-radius: 16px;
+  padding: 25px;
+  min-height: 210px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.07);
+}
+
+.feature-card .icon {
+  font-size: 35px;
+  margin-bottom: 12px;
+}
+
+.feature-card h3 {
+  margin: 5px 0 10px;
+  font-size: 20px;
+}
+
+.feature-card p {
+  color: #64748b;
+  line-height: 1.5;
+  min-height: 65px;
+}
+
+.feature-card button {
+  border: 1px solid #2563eb;
+  background: white;
+  color: #2563eb;
+  padding: 9px 15px;
+  border-radius: 8px;
+  font-weight: bold;
+}
+
+.feature-card button:hover {
+  background: #2563eb;
+  color: white;
+}
+
+/* FOOTER */
+
+footer {
+  text-align: center;
+  padding: 25px;
+  color: #64748b;
+  margin-top: 40px;
+}
+
+/* MOBILE */
+
+@media (max-width: 850px) {
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+
+  .cards {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard {
+    width: 92%;
+  }
+}
