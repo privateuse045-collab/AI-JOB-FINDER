@@ -362,30 +362,36 @@ function ProfilePage() {
 // ============================================================
 
   const [jobs, setJobs] = useState([]);
-// ============================================================
-// USER PROFILE
-// ============================================================
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searchMeta, setSearchMeta] = useState(null);
+  const [activeProfile, setActiveProfile] = useState(null);
 
-  const [profileOpen, setProfileOpen] = useState(false);
+  // Fetch active saved profile on load to show current profile criteria
+  useEffect(() => {
+    const fetchActiveProfile = async () => {
+      try {
+        const response = await fetch("http://127.0.0.1:8000/api/profile");
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.profile) {
+            setActiveProfile(data.profile);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load initial user profile:", err);
+      }
+    };
+    fetchActiveProfile();
+  }, []);
 
-  const [profile, setProfile] = useState({
-    name: "",
-    skills: "",
-    experience: "",
-    location: "",
-    preferred_role: "",
-    expected_salary: "",
-  });
 
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [profileMessage, setProfileMessage] = useState("");
-  const [profileError, setProfileError] = useState("");
   const [jobLoading, setJobLoading] = useState(false);
   const [jobError, setJobError] = useState("");
 
   const findJobs = async () => {
     setJobLoading(true);
     setJobError("");
+    setHasSearched(true);
     setJobs([]);
 
     try {
@@ -407,10 +413,21 @@ function ProfilePage() {
 
       console.log("Job Matching Response:", data);
 
-      if (data.matched_jobs) {
-        setJobs(data.matched_jobs);
+      if (data.success) {
+        setJobs(data.matched_jobs || []);
+        setSearchMeta({
+          jobsFound: data.jobs_found || 0,
+          profileUsed: data.profile_used || null,
+          geminiUsed: data.gemini_used || false,
+          message: data.message || "",
+        });
+        if (data.profile_used) {
+          setActiveProfile(data.profile_used);
+        }
       } else {
-        setJobError("No matched jobs were returned.");
+        setJobError(
+          data.message || "Failed to fetch matching jobs. Please verify your profile."
+        );
       }
     } catch (error) {
       console.error(error);
@@ -423,66 +440,7 @@ function ProfilePage() {
     }
   };
 
-  // ============================================================
-  // SAVE USER PROFILE
-  // ============================================================
 
-  const saveProfile = async () => {
-    setProfileLoading(true);
-    setProfileMessage("");
-    setProfileError("");
-
-    try {
-      const response = await fetch(
-        "http://127.0.0.1:8000/api/profile",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: profile.name,
-
-            skills: profile.skills
-              .split(",")
-              .map((skill) => skill.trim())
-              .filter((skill) => skill !== ""),
-
-            experience: profile.experience,
-            location: profile.location,
-            preferred_role: profile.preferred_role,
-            expected_salary: profile.expected_salary,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error("Profile save failed");
-      }
-
-      const data = await response.json();
-
-      console.log("Profile Save Response:", data);
-
-      if (data.success) {
-        setProfileMessage("✅ Profile saved successfully!");
-      } else {
-        setProfileError(
-          data.message || "Profile save nahi ho payi."
-        );
-      }
-
-    } catch (error) {
-      console.error(error);
-
-      setProfileError(
-        "Backend se connection nahi ho pa raha. Please check FastAPI server."
-      );
-
-    } finally {
-      setProfileLoading(false);
-    }
-  };
 
   // ============================================================
   // AI TRAINING
@@ -587,6 +545,10 @@ function ProfilePage() {
             WELCOME CARD
         ==================================================== */}
 
+        {/* ====================================================
+            WELCOME CARD
+        ==================================================== */}
+
         <section className="welcome-card">
 
           <h2>
@@ -597,175 +559,275 @@ function ProfilePage() {
             Find jobs that match your skills, experience and career goals.
           </p>
 
+          {activeProfile && (activeProfile.preferred_role || activeProfile.location) ? (
+            <div className="active-profile-banner">
+              <span className="profile-indicator-dot"></span>
+              <span>
+                Matching with saved profile: <strong>{activeProfile.preferred_role || "Role"}</strong>
+                {activeProfile.location ? ` in ${activeProfile.location}` : ""}
+                {activeProfile.experience ? ` • ${activeProfile.experience}` : ""}
+              </span>
+            </div>
+          ) : (
+            <div className="active-profile-banner warning">
+              <span>💡 Complete your profile so AI can find tailored jobs for you.</span>
+              <button
+                className="profile-link-btn"
+                onClick={() => window.location.href = "/profile"}
+              >
+                Set Up Profile →
+              </button>
+            </div>
+          )}
+
           <button
             className="primary-button"
             onClick={findJobs}
             disabled={jobLoading}
           >
             {jobLoading
-              ? "⏳ Finding Jobs..."
+              ? "⏳ Finding Best Matches..."
               : "🔎 Find My Best Jobs"}
           </button>
 
-          {jobError && (
-            <p className="error-message">
-              ❌ {jobError}
-            </p>
-          )}
-
         </section>
+
+
+        {/* ====================================================
+            LOADING STATE
+        ==================================================== */}
+
+        {jobLoading && (
+          <section className="job-status-card loading">
+            <div className="spinner"></div>
+            <h3>🤖 AI is finding and matching jobs...</h3>
+            <p>
+              Searching live listings and evaluating match scores with your profile skills & experience.
+            </p>
+          </section>
+        )}
+
+
+        {/* ====================================================
+            ERROR STATE
+        ==================================================== */}
+
+        {!jobLoading && jobError && (
+          <section className="job-status-card error">
+            <div className="status-icon">⚠️</div>
+            <h3>Unable to find matched jobs</h3>
+            <p>{jobError}</p>
+            <div className="status-actions">
+              <button className="primary-button" onClick={findJobs}>
+                🔄 Try Again
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => window.location.href = "/profile"}
+              >
+                👤 Update Profile
+              </button>
+            </div>
+          </section>
+        )}
+
+
+        {/* ====================================================
+            EMPTY STATE (0 JOBS FOUND)
+        ==================================================== */}
+
+        {!jobLoading && !jobError && hasSearched && jobs.length === 0 && (
+          <section className="job-status-card empty">
+            <div className="status-icon">🔍</div>
+            <h3>No matching jobs found</h3>
+            <p>
+              {searchMeta?.message ||
+                "We couldn't find any job postings matching your current target role and location."}
+            </p>
+            <p className="hint">
+              Try adjusting your preferred role or location in your profile.
+            </p>
+            <button
+              className="secondary-button"
+              onClick={() => window.location.href = "/profile"}
+            >
+              ✏️ Update Profile
+            </button>
+          </section>
+        )}
 
 
         {/* ====================================================
             JOB RESULTS
         ==================================================== */}
 
-        {jobs.length > 0 && (
+        {!jobLoading && jobs.length > 0 && (
 
           <section className="jobs-section">
 
-            <h2>
-              🏆 Your Best Job Matches
-            </h2>
+            <div className="jobs-section-header">
+              <div>
+                <h2>
+                  🏆 Your Best Job Matches ({jobs.length})
+                </h2>
 
-            <p className="section-description">
-              AI analyzed these jobs based on your saved profile.
-            </p>
+                <p className="section-description">
+                  AI analyzed and ranked these jobs based on your saved profile
+                  {searchMeta?.profileUsed?.preferred_role
+                    ? ` for "${searchMeta.profileUsed.preferred_role}"`
+                    : ""}
+                  {searchMeta?.profileUsed?.location
+                    ? ` in ${searchMeta.profileUsed.location}`
+                    : ""}.
+                </p>
+              </div>
+
+              {searchMeta?.geminiUsed && (
+                <span className="ai-badge">✨ Gemini AI Analyzed</span>
+              )}
+            </div>
 
 
             <div className="jobs-grid">
 
-              {jobs.map((job, index) => (
+              {jobs.map((job, index) => {
+                const score = typeof job.match_score === "number" ? job.match_score : 0;
+                const scoreClass =
+                  score >= 70 ? "score-high" : score >= 40 ? "score-mid" : "score-low";
 
-                <div
-                  className="job-card"
-                  key={index}
-                >
+                return (
+                  <div
+                    className="job-card"
+                    key={index}
+                  >
 
-                  <div className="job-header">
+                    <div className="job-header">
 
-                    <h3>
-                      {job.title}
-                    </h3>
+                      <div className="job-title-group">
+                        <h3 title={job.title}>
+                          {job.title}
+                        </h3>
 
-                    <span className="match-score">
-                      {job.match_score}%
-                    </span>
+                        <p className="job-company">
+                          🏢{" "}
+                          <strong>
+                            {job.company || "Company not specified"}
+                          </strong>
+                        </p>
 
-                  </div>
-
-
-                  <p>
-                    🏢{" "}
-                    <strong>
-                      {job.company || "Company not specified"}
-                    </strong>
-                  </p>
-
-
-                  <p>
-                    📍{" "}
-                    {job.location || "Location not specified"}
-                  </p>
-
-
-                  {/* MATCHING SKILLS */}
-
-                  {job.matching_skills &&
-                    job.matching_skills.length > 0 && (
-
-                      <div>
-
-                        <h4>
-                          ✅ Matching Skills
-                        </h4>
-
-                        <div className="skills">
-
-                          {job.matching_skills.map(
-                            (skill, skillIndex) => (
-
-                              <span key={skillIndex}>
-                                {skill}
-                              </span>
-
-                            )
-                          )}
-
-                        </div>
-
+                        <p className="job-location">
+                          📍{" "}
+                          {job.location || "Location not specified"}
+                        </p>
                       </div>
 
-                    )}
-
-
-                  {/* MISSING SKILLS */}
-
-                  {job.missing_skills &&
-                    job.missing_skills.length > 0 && (
-
-                      <div>
-
-                        <h4>
-                          📚 Skills to Improve
-                        </h4>
-
-                        <div className="skills missing">
-
-                          {job.missing_skills.map(
-                            (skill, skillIndex) => (
-
-                              <span key={skillIndex}>
-                                {skill}
-                              </span>
-
-                            )
-                          )}
-
-                        </div>
-
+                      <div className={`match-score ${scoreClass}`}>
+                        <span className="score-value">{score}%</span>
+                        <span className="score-text">Match</span>
                       </div>
-
-                    )}
-
-
-                  {/* AI RECOMMENDATION */}
-
-                  {job.recommendation && (
-
-                    <div className="recommendation">
-
-                      <h4>
-                        💡 AI Recommendation
-                      </h4>
-
-                      <p>
-                        {job.recommendation}
-                      </p>
 
                     </div>
 
-                  )}
+
+                    {/* MATCHING SKILLS */}
+
+                    {job.matching_skills &&
+                      job.matching_skills.length > 0 && (
+
+                        <div className="skills-block">
+
+                          <h4>
+                            ✅ Matching Skills
+                          </h4>
+
+                          <div className="skills">
+
+                            {job.matching_skills.map(
+                              (skill, skillIndex) => (
+
+                                <span key={skillIndex} className="skill-pill match">
+                                  {skill}
+                                </span>
+
+                              )
+                            )}
+
+                          </div>
+
+                        </div>
+
+                      )}
 
 
-                  {/* JOB LINK */}
+                    {/* MISSING SKILLS */}
 
-                  {job.url && (
+                    {job.missing_skills &&
+                      job.missing_skills.length > 0 && (
 
-                    <a
-                      href={job.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="job-link"
-                    >
-                      View Job →
-                    </a>
+                        <div className="skills-block">
 
-                  )}
+                          <h4>
+                            📚 Skills to Improve
+                          </h4>
 
-                </div>
+                          <div className="skills missing">
 
-              ))}
+                            {job.missing_skills.map(
+                              (skill, skillIndex) => (
+
+                                <span key={skillIndex} className="skill-pill missing">
+                                  {skill}
+                                </span>
+
+                              )
+                            )}
+
+                          </div>
+
+                        </div>
+
+                      )}
+
+
+                    {/* AI RECOMMENDATION */}
+
+                    {job.recommendation && (
+
+                      <div className="recommendation">
+
+                        <h4>
+                          💡 AI Recommendation
+                        </h4>
+
+                        <p>
+                          {job.recommendation}
+                        </p>
+
+                      </div>
+
+                    )}
+
+
+                    {/* JOB LINK */}
+
+                    {job.url && (
+
+                      <div className="job-card-actions">
+                        <a
+                          href={job.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="job-link"
+                        >
+                          View Job on Portal →
+                        </a>
+                      </div>
+
+                    )}
+
+                  </div>
+                );
+              })}
 
             </div>
 
