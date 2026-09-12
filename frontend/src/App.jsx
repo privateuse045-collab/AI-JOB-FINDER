@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import "./App.css";
 
@@ -17,9 +17,43 @@ function ProfilePage() {
     expected_salary: "",
   });
 
+  const [fetchingProfile, setFetchingProfile] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      setFetchingProfile(true);
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/api/profile");
+
+        if (response.ok) {
+          const data = await response.json();
+
+          if (data.success && data.profile) {
+            setProfile({
+              name: data.profile.name || "",
+              skills: Array.isArray(data.profile.skills)
+                ? data.profile.skills.join(", ")
+                : (data.profile.skills || ""),
+              experience: data.profile.experience || "",
+              location: data.profile.location || "",
+              preferred_role: data.profile.preferred_role || "",
+              expected_salary: data.profile.expected_salary || "",
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load user profile:", error);
+      } finally {
+        setFetchingProfile(false);
+      }
+    };
+
+    fetchProfile();
+  }, []);
 
   const saveProfile = async () => {
     setProfileLoading(true);
@@ -131,6 +165,12 @@ function ProfilePage() {
                 <p>
                   Complete your profile so AI can find better jobs for you.
                 </p>
+
+                {fetchingProfile && (
+                  <p className="status-message">
+                    ⏳ Loading profile...
+                  </p>
+                )}
               
 
             {/* NAME */}
