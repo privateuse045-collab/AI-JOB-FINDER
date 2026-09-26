@@ -1021,7 +1021,8 @@ def match_jobs_from_saved_profile():
 
     ranked_jobs = rank_jobs(
         skills,
-        jobs
+        jobs,
+        profile.preferred_role   # enables role/domain-aware scoring
     )
 
     # --------------------------------------------------------
@@ -1104,21 +1105,12 @@ Rules:
 
             analysis = json.loads(clean_response)
 
-            job["match_score"] = analysis.get(
-                "match_score",
-                job.get("match_score", 0)
-            )
-
-            job["matching_skills"] = analysis.get(
-                "matching_skills",
-                job.get("matching_skills", [])
-            )
-
-            job["missing_skills"] = analysis.get(
-                "missing_skills",
-                job.get("missing_skills", [])
-            )
-
+            # IMPORTANT:
+            # Gemini is used only for the human-readable recommendation.
+            # match_score, matching_skills, and missing_skills always
+            # come from the local matcher and are NEVER overwritten here.
+            # This ensures Gemini quota errors or low/zero Gemini scores
+            # cannot degrade a valid local match result.
             job["recommendation"] = analysis.get(
                 "recommendation",
                 "Good match based on your profile."

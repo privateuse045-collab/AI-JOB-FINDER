@@ -6,6 +6,8 @@ __pycache__/
 # Backup files
 backend/app/main_backup*.py
 backend/app/main_before_*.py
+backend/app/job_matcher_backup.py
+backend/app/job_matcher_backup_before_bms_fix.py
 
 # Practice and test files
 backend/app/sqlalchemy_practice.py

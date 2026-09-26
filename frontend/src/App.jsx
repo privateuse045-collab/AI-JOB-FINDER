@@ -353,6 +353,70 @@ function ProfilePage() {
 }
 
 // ============================================================
+// SKILL DISPLAY NORMALIZATION
+// ============================================================
+
+const SAFE_SKILL_DISPLAY_MAP = {
+  // Acronyms & exact casing
+  "bms": "BMS",
+  "building management system": "BMS",
+  "building management systems": "BMS",
+  "building management system (bms)": "BMS",
+  "building management systems (bms)": "BMS",
+  "building automation": "Building Automation Systems",
+  "building automation system": "Building Automation Systems",
+  "building automation systems": "Building Automation Systems",
+  "plc": "PLC",
+  "programmable logic controller": "PLC",
+  "programmable logic controllers": "PLC",
+  "scada": "SCADA",
+  "supervisory control and data acquisition": "SCADA",
+  "hvac": "HVAC",
+  "ddc": "DDC",
+  "direct digital control": "DDC",
+  "git": "Git",
+  "mep": "MEP",
+  "elv": "ELV",
+  "extra low voltage": "ELV",
+  "bacnet": "BACnet",
+  "bacnet/ip": "BACnet",
+  "modbus": "Modbus",
+  "cctv": "CCTV",
+  "closed circuit television": "CCTV",
+  "access control system": "Access Control",
+  "access control systems": "Access Control",
+  "access control": "Access Control",
+  "access-control": "Access Control",
+
+  // Multi-word specific skills (preserve exact discipline, normalize casing only)
+  "hvac controls": "HVAC Controls",
+  "hvac automation": "HVAC Automation",
+  "bms programming": "BMS Programming",
+  "bms systems integration": "BMS Systems Integration",
+  "plc/scada": "PLC/SCADA",
+  "plc/scada programming": "PLC/SCADA Programming",
+  "controls engineering": "Controls Engineering",
+  "commissioning": "Commissioning",
+  "system commissioning": "System Commissioning",
+  "bacnet/modbus protocols": "BACnet/Modbus Protocols",
+  "bacnet / modbus protocols": "BACnet/Modbus Protocols",
+  "scada / plc": "PLC/SCADA",
+  "plc / scada": "PLC/SCADA",
+};
+
+function normalizeSkillForDisplay(skill) {
+  if (!skill || typeof skill !== "string") return "";
+  const trimmed = skill.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (SAFE_SKILL_DISPLAY_MAP[lower]) {
+    return SAFE_SKILL_DISPLAY_MAP[lower];
+  }
+
+  return trimmed;
+}
+
+// ============================================================
 // MAIN APP
 // ============================================================
 
@@ -362,6 +426,14 @@ function ProfilePage() {
 // ============================================================
 
   const [jobs, setJobs] = useState([]);
+  const allMissingSkills = [
+    ...new Set(
+      jobs
+        .flatMap((job) => job.missing_skills || [])
+        .map((skill) => normalizeSkillForDisplay(skill))
+        .filter(Boolean)
+    )
+  ];
   const [hasSearched, setHasSearched] = useState(false);
   const [searchMeta, setSearchMeta] = useState(null);
   const [activeProfile, setActiveProfile] = useState(null);
@@ -688,6 +760,35 @@ function ProfilePage() {
             </div>
 
 
+            {/* ================================================
+                SKILL GAP OVERVIEW
+            ================================================ */}
+
+            {allMissingSkills.length > 0 && (
+              <section className="skill-gap-overview">
+
+                <div className="skill-gap-header">
+                  <h3>
+                    📚 Skill Gap Overview ({allMissingSkills.length})
+                  </h3>
+
+                  <p>
+                    These are skills missing across the displayed job listings based on your saved profile:
+                  </p>
+                </div>
+
+                <div className="skills missing">
+                  {allMissingSkills.map((skill, index) => (
+                    <span key={index} className="skill-pill missing">
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+
+              </section>
+            )}
+
+
             <div className="jobs-grid">
 
               {jobs.map((job, index) => {
@@ -863,52 +964,56 @@ function ProfilePage() {
               Select Skill
             </label>
 
-            <select
-              id="skill"
-              value={selectedSkill}
-              onChange={(event) =>
-                setSelectedSkill(event.target.value)
-              }
-            >
+            {(() => {
+              const effectiveSkill =
+                allMissingSkills.length > 0 && !allMissingSkills.includes(selectedSkill)
+                  ? allMissingSkills[0]
+                  : selectedSkill;
 
-              <option value="SQLAlchemy">
-                SQLAlchemy
-              </option>
+              return (
+                <>
+                  <select
+                    id="skill"
+                    value={effectiveSkill}
+                    onChange={(event) =>
+                      setSelectedSkill(event.target.value)
+                    }
+                  >
 
-              <option value="Pytest">
-                Pytest
-              </option>
+                    {allMissingSkills.length > 0 ? (
+                      allMissingSkills.map((skill, index) => (
+                        <option key={index} value={skill}>
+                          {skill}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="SQLAlchemy">SQLAlchemy</option>
+                        <option value="Pytest">Pytest</option>
+                        <option value="Docker">Docker</option>
+                        <option value="Asyncio">Asyncio</option>
+                        <option value="Redis">Redis</option>
+                        <option value="CI/CD">CI/CD</option>
+                      </>
+                    )}
 
-              <option value="Docker">
-                Docker
-              </option>
-
-              <option value="Asyncio">
-                Asyncio
-              </option>
-
-              <option value="Redis">
-                Redis
-              </option>
-
-              <option value="CI/CD">
-                CI/CD
-              </option>
-
-            </select>
+                  </select>
 
 
-            <button
-              className="primary-button"
-              onClick={() => startTraining(selectedSkill)}
-              disabled={trainingLoading}
-            >
+                  <button
+                    className="primary-button"
+                    onClick={() => startTraining(effectiveSkill)}
+                    disabled={trainingLoading}
+                  >
 
-              {trainingLoading
-                ? "⏳ Generating Lesson..."
-                : "🎓 Start Training"}
+                    {trainingLoading
+                      ? "⏳ Generating Lesson..."
+                      : "🎓 Start Training"}
 
-            </button>
+                  </button>
+                </>
+              );
+            })()}
 
           </div>
 

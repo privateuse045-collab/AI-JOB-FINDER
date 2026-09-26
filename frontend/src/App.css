@@ -334,6 +334,30 @@ footer {
   height: fit-content;
 }
 
+/* SKILL GAP OVERVIEW */
+.skill-gap-overview {
+  background: white;
+  border-radius: 16px;
+  padding: 22px 24px;
+  margin-bottom: 25px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05);
+  border: 1px solid #fed7aa;
+  background: linear-gradient(180deg, #fffbf5 0%, #ffffff 100%);
+}
+
+.skill-gap-header h3 {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+  color: #9a3412;
+}
+
+.skill-gap-header p {
+  margin: 0 0 12px 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 /* JOBS GRID */
 .jobs-grid {
   display: grid;
