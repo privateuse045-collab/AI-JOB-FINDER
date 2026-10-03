@@ -571,6 +571,257 @@ function normalizeSkillForDisplay(skill) {
   };
 
   // ============================================================
+  // PRACTICE
+  // ============================================================
+
+  const [practiceSetup, setPracticeSetup] = useState({
+    target_role: "",
+    topic: "",
+    difficulty: "Beginner",
+    number_of_questions: 5,
+  });
+
+  const [practiceQuestions, setPracticeQuestions] = useState([]);
+  const [currentPracticeIndex, setCurrentPracticeIndex] = useState(0);
+  const [practiceAnswer, setPracticeAnswer] = useState("");
+  const [practiceEvaluation, setPracticeEvaluation] = useState(null);
+  const [practiceLoading, setPracticeLoading] = useState(false);
+  const [practiceEvaluating, setPracticeEvaluating] = useState(false);
+  const [practiceError, setPracticeError] = useState("");
+  const [practiceCompleted, setPracticeCompleted] = useState(false);
+  const [isPracticeActive, setIsPracticeActive] = useState(false);
+
+  // Helper to parse generated questions text into clean question items
+  const parseQuestions = (rawText) => {
+    if (!rawText || typeof rawText !== "string") return [];
+
+    // Try splitting by standard numbered list: 1. or 1) or Question 1:
+    const lines = rawText.split(/\r?\n/);
+    const questions = [];
+    let currentQuestion = "";
+
+    const questionStartRegex = /^(?:(?:Q(?:uestion)?\s*\d+[\s:.-]+)|(?:\d+[-.)]\s+))/i;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      if (questionStartRegex.test(trimmed)) {
+        if (currentQuestion.trim()) {
+          questions.push(currentQuestion.trim());
+        }
+        currentQuestion = trimmed.replace(questionStartRegex, "").trim();
+      } else if (currentQuestion) {
+        currentQuestion += " " + trimmed;
+      }
+    }
+
+    if (currentQuestion.trim()) {
+      questions.push(currentQuestion.trim());
+    }
+
+    // If numbered regex didn't extract items, fallback to non-empty paragraphs or raw text
+    if (questions.length === 0) {
+      const paragraphs = rawText
+        .split(/\n\s*\n/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 5);
+      return paragraphs.length > 0 ? paragraphs : [rawText.trim()];
+    }
+
+    return questions;
+  };
+
+  const handleStartPracticeClick = () => {
+    setIsPracticeActive(true);
+    // Initialize practiceSetup with role and skill if available
+    setPracticeSetup((prev) => ({
+      ...prev,
+      target_role: prev.target_role || activeProfile?.preferred_role || "Python Developer",
+      topic: prev.topic || selectedSkill || (allMissingSkills.length > 0 ? allMissingSkills[0] : "FastAPI"),
+    }));
+
+    setTimeout(() => {
+      const el = document.getElementById("practice-section");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth" });
+      }
+    }, 100);
+  };
+
+  const generatePractice = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+
+    if (!practiceSetup.target_role.trim()) {
+      setPracticeError("Please enter a Target Job Role.");
+      return;
+    }
+    if (!practiceSetup.topic.trim()) {
+      setPracticeError("Please enter a Topic.");
+      return;
+    }
+
+    const numQuestions = parseInt(practiceSetup.number_of_questions, 10);
+    if (isNaN(numQuestions) || numQuestions < 1 || numQuestions > 20) {
+      setPracticeError("Number of questions must be between 1 and 20.");
+      return;
+    }
+
+    setPracticeLoading(true);
+    setPracticeError("");
+    setPracticeQuestions([]);
+    setCurrentPracticeIndex(0);
+    setPracticeAnswer("");
+    setPracticeEvaluation(null);
+    setPracticeCompleted(false);
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/api/practice/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          target_role: practiceSetup.target_role.trim(),
+          topic: practiceSetup.topic.trim(),
+          difficulty: practiceSetup.difficulty,
+          number_of_questions: numQuestions,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Practice generation request failed");
+      }
+
+      const data = await response.json();
+
+      if (data.success && data.practice_questions) {
+        const parsed = parseQuestions(data.practice_questions);
+        setPracticeQuestions(parsed);
+        setCurrentPracticeIndex(0);
+      } else {
+        setPracticeError(data.message || "Failed to generate practice questions.");
+      }
+    } catch (err) {
+      console.error(err);
+      setPracticeError("Backend se connection nahi ho pa raha. Please check FastAPI server.");
+    } finally {
+      setPracticeLoading(false);
+    }
+  };
+
+  const submitPracticeAnswer = async () => {
+    if (!practiceAnswer.trim()) {
+      setPracticeError("Please type an answer before submitting.");
+      return;
+    }
+
+    const currentQuestion = practiceQuestions[currentPracticeIndex] || practiceSetup.topic;
+
+    setPracticeEvaluating(true);
+    setPracticeError("");
+    setPracticeEvaluation(null);
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/api/practice/evaluate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          target_role: practiceSetup.target_role,
+          topic: practiceSetup.topic,
+          question: currentQuestion,
+          user_answer: practiceAnswer.trim(),
+          difficulty: practiceSetup.difficulty,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Practice evaluation request failed");
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        setPracticeEvaluation({
+          score: data.score,
+          rawText: data.evaluation,
+        });
+      } else {
+        setPracticeError(data.message || "Failed to evaluate answer.");
+      }
+    } catch (err) {
+      console.error(err);
+      setPracticeError("Could not evaluate answer. Please verify backend server.");
+    } finally {
+      setPracticeEvaluating(false);
+    }
+  };
+
+  const nextPracticeQuestion = () => {
+    if (currentPracticeIndex + 1 < practiceQuestions.length) {
+      setCurrentPracticeIndex((prev) => prev + 1);
+      setPracticeAnswer("");
+      setPracticeEvaluation(null);
+      setPracticeError("");
+    } else {
+      setPracticeCompleted(true);
+    }
+  };
+
+  const resetPractice = () => {
+    setPracticeQuestions([]);
+    setCurrentPracticeIndex(0);
+    setPracticeAnswer("");
+    setPracticeEvaluation(null);
+    setPracticeError("");
+    setPracticeCompleted(false);
+  };
+
+  // Helper to parse sections from the evaluation text
+  const parseEvaluationSections = (evalText) => {
+    if (!evalText) return null;
+
+    const sections = {
+      scoreText: "",
+      correct: "",
+      missing: "",
+      improvement: "",
+      understanding: "",
+      tip: "",
+      nextStep: "",
+      general: "",
+    };
+
+    // Try extracting structured headings
+    const sectionNames = [
+      { key: "scoreText", regex: /(?:^|\n)\s*(?:1\.\s*)?Score(?:\s*out\s*of\s*10)?[:\s-]*([\s\S]*?)(?=(?:\n\s*(?:2\.\s*)?What Was Correct|\n\s*\d+\.|$))/i },
+      { key: "correct", regex: /(?:^|\n)\s*(?:2\.\s*)?What Was Correct[:\s-]*([\s\S]*?)(?=(?:\n\s*(?:3\.\s*)?What Was Missing|\n\s*\d+\.|$))/i },
+      { key: "missing", regex: /(?:^|\n)\s*(?:3\.\s*)?What Was Missing[:\s-]*([\s\S]*?)(?=(?:\n\s*(?:4\.\s*)?What Needs Improvement|\n\s*\d+\.|$))/i },
+      { key: "improvement", regex: /(?:^|\n)\s*(?:4\.\s*)?What Needs Improvement[:\s-]*([\s\S]*?)(?=(?:\n\s*(?:5\.\s*)?Correct Understanding|\n\s*\d+\.|$))/i },
+      { key: "understanding", regex: /(?:^|\n)\s*(?:5\.\s*)?Correct Understanding[:\s-]*([\s\S]*?)(?=(?:\n\s*(?:6\.\s*)?Interview Tip|\n\s*\d+\.|$))/i },
+      { key: "tip", regex: /(?:^|\n)\s*(?:6\.\s*)?Interview Tip[:\s-]*([\s\S]*?)(?=(?:\n\s*(?:7\.\s*)?Recommended Next Step|\n\s*\d+\.|$))/i },
+      { key: "nextStep", regex: /(?:^|\n)\s*(?:7\.\s*)?Recommended Next Step[:\s-]*([\s\S]*?)$/i },
+    ];
+
+    let foundAny = false;
+    for (const sec of sectionNames) {
+      const match = evalText.match(sec.regex);
+      if (match && match[1] && match[1].trim()) {
+        sections[sec.key] = match[1].trim();
+        foundAny = true;
+      }
+    }
+
+    if (!foundAny) {
+      sections.general = evalText.trim();
+    }
+
+    return sections;
+  };
+
+  // ============================================================
   // UI
   // ============================================================
 
@@ -1197,6 +1448,295 @@ function normalizeSkillForDisplay(skill) {
 
 
         {/* ====================================================
+            PRACTICE SECTION
+        ==================================================== */}
+
+        {isPracticeActive && (
+          <section id="practice-section" className="practice-section">
+            <div className="practice-header">
+              <div>
+                <h2>📝 Technical & Interview Practice</h2>
+                <p>Sharpen your interview readiness with AI-generated role-specific questions and instant feedback.</p>
+              </div>
+              <button
+                className="close-button"
+                onClick={() => setIsPracticeActive(false)}
+                title="Close Practice"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* PRACTICE SETUP CARD */}
+            <div className="practice-card setup-card">
+              <h3>🎯 Practice Setup</h3>
+              <form onSubmit={generatePractice} className="practice-form">
+                <div className="practice-form-grid">
+                  <div className="form-group">
+                    <label htmlFor="target-role">Target Job Role</label>
+                    <input
+                      id="target-role"
+                      type="text"
+                      placeholder="e.g. BMS Engineer, Python Developer"
+                      value={practiceSetup.target_role}
+                      onChange={(e) =>
+                        setPracticeSetup({ ...practiceSetup, target_role: e.target.value })
+                      }
+                      disabled={practiceLoading}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="practice-topic">Topic / Skill</label>
+                    <input
+                      id="practice-topic"
+                      type="text"
+                      placeholder="e.g. BACnet, SQLAlchemy, System Design"
+                      value={practiceSetup.topic}
+                      onChange={(e) =>
+                        setPracticeSetup({ ...practiceSetup, topic: e.target.value })
+                      }
+                      disabled={practiceLoading}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="practice-difficulty">Difficulty</label>
+                    <select
+                      id="practice-difficulty"
+                      value={practiceSetup.difficulty}
+                      onChange={(e) =>
+                        setPracticeSetup({ ...practiceSetup, difficulty: e.target.value })
+                      }
+                      disabled={practiceLoading}
+                    >
+                      <option value="Beginner">Beginner</option>
+                      <option value="Intermediate">Intermediate</option>
+                      <option value="Advanced">Advanced</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="practice-num-questions">Number of Questions</label>
+                    <input
+                      id="practice-num-questions"
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={practiceSetup.number_of_questions}
+                      onChange={(e) =>
+                        setPracticeSetup({
+                          ...practiceSetup,
+                          number_of_questions: Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)),
+                        })
+                      }
+                      disabled={practiceLoading}
+                    />
+                  </div>
+                </div>
+
+                <div className="practice-actions">
+                  <button
+                    type="submit"
+                    className="primary-button"
+                    disabled={practiceLoading}
+                  >
+                    {practiceLoading ? "⏳ Generating Questions..." : "🚀 Generate Practice Questions"}
+                  </button>
+                  {practiceQuestions.length > 0 && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={resetPractice}
+                    >
+                      🔄 Reset Session
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+
+            {/* ERROR MESSAGE */}
+            {practiceError && (
+              <div className="practice-error-banner">
+                <span>⚠️ {practiceError}</span>
+              </div>
+            )}
+
+            {/* QUESTIONS & EVALUATION WORKFLOW */}
+            {practiceQuestions.length > 0 && !practiceCompleted && (
+              <div className="practice-workspace">
+                <div className="practice-progress-bar">
+                  <div className="progress-info">
+                    <span>
+                      Question <strong>{currentPracticeIndex + 1}</strong> of <strong>{practiceQuestions.length}</strong>
+                    </span>
+                    <span className="difficulty-badge">{practiceSetup.difficulty}</span>
+                  </div>
+                  <div className="progress-track">
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width: `${((currentPracticeIndex + 1) / practiceQuestions.length) * 100}%`,
+                      }}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* CURRENT QUESTION CARD */}
+                <div className="practice-card question-card">
+                  <div className="question-header">
+                    <span className="question-tag">Question #{currentPracticeIndex + 1}</span>
+                    <span className="topic-tag">{practiceSetup.topic}</span>
+                  </div>
+
+                  <p className="question-text">
+                    {practiceQuestions[currentPracticeIndex]}
+                  </p>
+
+                  <div className="answer-section">
+                    <label htmlFor="practice-user-answer">Your Answer:</label>
+                    <textarea
+                      id="practice-user-answer"
+                      rows="6"
+                      placeholder="Type your explanation, approach, or technical answer here..."
+                      value={practiceAnswer}
+                      onChange={(e) => setPracticeAnswer(e.target.value)}
+                      disabled={practiceEvaluating}
+                    />
+
+                    <div className="answer-actions">
+                      <button
+                        className="primary-button"
+                        onClick={submitPracticeAnswer}
+                        disabled={practiceEvaluating || !practiceAnswer.trim()}
+                      >
+                        {practiceEvaluating ? "⏳ Evaluating Answer..." : "📤 Submit Answer for Evaluation"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* EVALUATION RESULT CARD */}
+                {practiceEvaluation && (
+                  <div className="practice-card evaluation-card">
+                    <div className="evaluation-header">
+                      <div className="score-badge">
+                        <span className="score-num">{practiceEvaluation.score}</span>
+                        <span className="score-denom">/ 10</span>
+                      </div>
+                      <div className="evaluation-summary">
+                        <h4>AI Interviewer Evaluation</h4>
+                        <p>Detailed performance breakdown and educational tips.</p>
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const sections = parseEvaluationSections(practiceEvaluation.rawText);
+
+                      if (sections.general) {
+                        return (
+                          <div className="evaluation-general">
+                            <pre className="evaluation-pre">{sections.general}</pre>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="evaluation-grid">
+                          {sections.correct && (
+                            <div className="eval-item correct">
+                              <h5>✅ What Was Correct</h5>
+                              <p>{sections.correct}</p>
+                            </div>
+                          )}
+
+                          {sections.missing && (
+                            <div className="eval-item missing">
+                              <h5>⚠️ What Was Missing</h5>
+                              <p>{sections.missing}</p>
+                            </div>
+                          )}
+
+                          {sections.improvement && (
+                            <div className="eval-item improvement">
+                              <h5>🔧 What Needs Improvement</h5>
+                              <p>{sections.improvement}</p>
+                            </div>
+                          )}
+
+                          {sections.understanding && (
+                            <div className="eval-item understanding">
+                              <h5>💡 Correct Understanding</h5>
+                              <p>{sections.understanding}</p>
+                            </div>
+                          )}
+
+                          {sections.tip && (
+                            <div className="eval-item tip">
+                              <h5>🎤 Interview Tip</h5>
+                              <p>{sections.tip}</p>
+                            </div>
+                          )}
+
+                          {sections.nextStep && (
+                            <div className="eval-item next-step">
+                              <h5>🚀 Recommended Next Step</h5>
+                              <p>{sections.nextStep}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    <div className="evaluation-actions">
+                      <button
+                        className="primary-button next-button"
+                        onClick={nextPracticeQuestion}
+                      >
+                        {currentPracticeIndex + 1 < practiceQuestions.length
+                          ? "Next Question ➔"
+                          : "Finish Practice Session 🏁"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* COMPLETION CARD */}
+            {practiceCompleted && (
+              <div className="practice-card completion-card">
+                <div className="completion-icon">🎉</div>
+                <h3>Practice Session Completed!</h3>
+                <p>
+                  You finished all <strong>{practiceQuestions.length}</strong> questions on{" "}
+                  <strong>{practiceSetup.topic}</strong> for the <strong>{practiceSetup.target_role}</strong> role.
+                </p>
+                <div className="completion-actions">
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      resetPractice();
+                      generatePractice();
+                    }}
+                  >
+                    🔁 Practice Again
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => setIsPracticeActive(false)}
+                  >
+                    ✕ Close Practice
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+
+        {/* ====================================================
             FEATURES
         ==================================================== */}
 
@@ -1304,7 +1844,7 @@ function normalizeSkillForDisplay(skill) {
               Practice interview and technical questions.
             </p>
 
-            <button>
+            <button onClick={handleStartPracticeClick}>
               Start Practice
             </button>
 
