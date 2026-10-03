@@ -2,6 +2,8 @@ import os
 from dotenv import load_dotenv
 from google import genai
 
+from app.ai_provider_manager import ask_ai
+
 load_dotenv()
 
 api_key = os.getenv("GEMINI_API_KEY")
@@ -10,12 +12,11 @@ client = genai.Client(api_key=api_key)
 
 
 def ask_gemini(prompt):
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt
-    )
-
-    return response.text
+    """
+    Delegates to centralized ai_provider_manager with primary Gemini execution
+    and automatic failover to OpenAI if a transient provider error occurs.
+    """
+    return ask_ai(prompt)
 
 
 def match_job_with_user(user_skills, job):
